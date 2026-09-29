@@ -2,8 +2,14 @@
 name = "shard-router"
 version = "0.1.0"
 edition = "2021"
-description = "Deterministic-first semantic shard router for Kalshi exchange shards, with Jev (TypeSafe System One) as the semantic fallback tier"
+description = "Deterministic-first shard router for the Kalshi exchange: verified shard resolution, exact integer fee schedules, async-safe prefunding, ledger reconciliation, and VOPR-style simulation testing."
 license = "MIT"
+repository = "https://github.com/copyleftdev/shard-router"
+homepage = "https://github.com/copyleftdev/shard-router"
+documentation = "https://github.com/copyleftdev/shard-router#readme"
+readme = "README.md"
+keywords = ["kalshi", "trading", "prediction-markets", "cli", "fintech"]
+categories = ["command-line-utilities", "finance"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

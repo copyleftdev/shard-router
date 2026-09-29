@@ -11,9 +11,6 @@
 //!
 //! A failing seed is a coordinate: `sim-world <seed>` reproduces it forever.
 
-use crate::router::Centicents;
-use std::collections::HashMap;
-
 pub const MAX_TICKS: u32 = 10_000;
 pub const NUM_SHARDS: usize = 4;
 
@@ -39,9 +36,17 @@ pub struct Order {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorldEvent {
     /// Request a transfer (agent-side view: "prefund").
-    RequestPrefund { from: u8, to: u8, amount_cc: i64 },
+    RequestPrefund {
+        from: u8,
+        to: u8,
+        amount_cc: i64,
+    },
     /// Place an order that will fill at `fill_at_tick` (draws cash).
-    PlaceOrder { shard: u8, cost_cc: i64, fill_at_tick: u32 },
+    PlaceOrder {
+        shard: u8,
+        cost_cc: i64,
+        fill_at_tick: u32,
+    },
     Tick,
 }
 
@@ -97,7 +102,11 @@ impl World {
     pub fn transition(&mut self, event: WorldEvent) {
         self.assert_conservation();
         match event {
-            WorldEvent::RequestPrefund { from, to, amount_cc } => {
+            WorldEvent::RequestPrefund {
+                from,
+                to,
+                amount_cc,
+            } => {
                 assert!(from < NUM_SHARDS as u8, "shard out of closed set");
                 assert!(to < NUM_SHARDS as u8, "shard out of closed set");
                 assert!(from != to, "self-transfer rejected upstream");
@@ -108,12 +117,25 @@ impl World {
                 );
                 self.balances[from as usize] -= amount_cc;
                 // cash is between shards while in flight — still conserved
-                self.in_flight.push(InFlight { from, to, amount_cc, land_at_tick: self.tick + 3 });
+                self.in_flight.push(InFlight {
+                    from,
+                    to,
+                    amount_cc,
+                    land_at_tick: self.tick + 3,
+                });
             }
-            WorldEvent::PlaceOrder { shard, cost_cc, fill_at_tick } => {
+            WorldEvent::PlaceOrder {
+                shard,
+                cost_cc,
+                fill_at_tick,
+            } => {
                 assert!(shard < NUM_SHARDS as u8, "shard out of closed set");
                 assert!(cost_cc > 0, "order cost must be positive");
-                self.orders.push(Order { shard, cost_cc, fill_at_tick });
+                self.orders.push(Order {
+                    shard,
+                    cost_cc,
+                    fill_at_tick,
+                });
             }
             WorldEvent::Tick => {
                 self.tick += 1;
@@ -158,7 +180,8 @@ pub struct WorldPrng(pub u64);
 
 impl WorldPrng {
     pub fn next(&mut self) -> u64 {
-        self.0 = self.0
+        self.0 = self
+            .0
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         self.0
@@ -193,7 +216,11 @@ pub fn run_world(seed: u64, initial: [i64; NUM_SHARDS]) -> World {
             let have = w.balances[richest as usize];
             let amt = (prng.below(have.max(1) as u64 + 1) as i64).min(have);
             if amt > 0 {
-                w.transition(WorldEvent::RequestPrefund { from: richest, to, amount_cc: amt });
+                w.transition(WorldEvent::RequestPrefund {
+                    from: richest,
+                    to,
+                    amount_cc: amt,
+                });
             }
         } else {
             // order on a random shard, filling within 0..=8 ticks — races
@@ -201,7 +228,11 @@ pub fn run_world(seed: u64, initial: [i64; NUM_SHARDS]) -> World {
             let shard = prng.below(NUM_SHARDS as u64) as u8;
             let fill_in = prng.below(9) as u32;
             let cost = 1 + prng.below(50_000) as i64;
-            w.transition(WorldEvent::PlaceOrder { shard, cost_cc: cost, fill_at_tick: w.tick + fill_in });
+            w.transition(WorldEvent::PlaceOrder {
+                shard,
+                cost_cc: cost,
+                fill_at_tick: w.tick + fill_in,
+            });
         }
         // advance a few ticks per op so landings interleave with placements
         for _ in 0..2 {
@@ -220,9 +251,17 @@ pub fn run_world(seed: u64, initial: [i64; NUM_SHARDS]) -> World {
 /// fill fires while the transfer is still in flight, then lands.
 pub fn okc_clamp_scenario() -> World {
     let mut w = World::new([200_000, 0, 0, 0]);
-    w.transition(WorldEvent::RequestPrefund { from: 0, to: 3, amount_cc: 150_000 });
+    w.transition(WorldEvent::RequestPrefund {
+        from: 0,
+        to: 3,
+        amount_cc: 150_000,
+    });
     // fill fires at tick 1; transfer lands at tick 3 -> bounce
-    w.transition(WorldEvent::PlaceOrder { shard: 3, cost_cc: 150_000, fill_at_tick: 1 });
+    w.transition(WorldEvent::PlaceOrder {
+        shard: 3,
+        cost_cc: 150_000,
+        fill_at_tick: 1,
+    });
     w.transition(WorldEvent::Tick); // t1: fill bounces (no observed cash)
     w.transition(WorldEvent::Tick); // t2
     w.transition(WorldEvent::Tick); // t3: transfer lands
@@ -243,7 +282,11 @@ mod tests {
         assert_eq!(w.fills_landed, 0);
         // after the transfer lands the SAME order size succeeds:
         let mut w2 = okc_clamp_scenario();
-        w2.transition(WorldEvent::PlaceOrder { shard: 3, cost_cc: 150_000, fill_at_tick: w2.tick + 1 });
+        w2.transition(WorldEvent::PlaceOrder {
+            shard: 3,
+            cost_cc: 150_000,
+            fill_at_tick: w2.tick + 1,
+        });
         w2.transition(WorldEvent::Tick);
         assert_eq!(w2.fills_landed, 1);
         assert_eq!(w2.balances[3], 0);
@@ -281,11 +324,20 @@ mod tests {
             let w = run_world(seed, [1_000_000; NUM_SHARDS]);
             assert_eq!(w.orders.len(), 0, "all orders must resolve at terminal");
             assert!(w.fills_landed + w.fills_bounced > 0);
-            assert!(w.in_flight.is_empty(), "all transfers must land at terminal");
-            distinct.insert(format!("{}:{}:{:?}", w.fills_landed, w.fills_bounced, w.balances));
+            assert!(
+                w.in_flight.is_empty(),
+                "all transfers must land at terminal"
+            );
+            distinct.insert(format!(
+                "{}:{}:{:?}",
+                w.fills_landed, w.fills_bounced, w.balances
+            ));
         }
         // negative space: the swarm should reach more than one distinct world
-        assert!(distinct.len() > 1, "swarm collapsed to a single world — PRNG not shaping");
+        assert!(
+            distinct.len() > 1,
+            "swarm collapsed to a single world — PRNG not shaping"
+        );
     }
 
     #[test]
@@ -295,7 +347,11 @@ mod tests {
         // tick. The stuck amount stays in_flight — the ledger reconcile
         // command treats exactly this shape as drift, never as spent cash.
         let mut w = World::new([100_000, 0, 0, 0]);
-        w.transition(WorldEvent::RequestPrefund { from: 0, to: 3, amount_cc: 40_000 });
+        w.transition(WorldEvent::RequestPrefund {
+            from: 0,
+            to: 3,
+            amount_cc: 40_000,
+        });
         assert_eq!(w.balances, [60_000, 0, 0, 0]);
         assert_eq!(w.in_flight.len(), 1);
         // wedge it: landing tick beyond any budget
@@ -305,17 +361,10 @@ mod tests {
         }
         w.assert_conservation();
         assert_eq!(w.in_flight.len(), 1, "wedged transfer must never land");
-        assert_eq!(w.balances, [60_000, 0, 0, 0], "cash must not move while wedged");
+        assert_eq!(
+            w.balances,
+            [60_000, 0, 0, 0],
+            "cash must not move while wedged"
+        );
     }
-}
-
-// silence unused import when compiled without tests
-#[allow(unused)]
-fn _centicents_use() -> Option<Centicents> {
-    None
-}
-
-#[allow(unused)]
-fn _hashmap_use() -> Option<HashMap<u8, i64>> {
-    None
 }

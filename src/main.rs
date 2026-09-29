@@ -16,10 +16,10 @@
 
 mod dst;
 mod jev;
-mod ledger;
-mod world;
 mod kalshi;
+mod ledger;
 mod router;
+mod world;
 
 use router::{Centicents, Shard, Verdict};
 use std::collections::HashMap;
@@ -45,21 +45,33 @@ fn main() -> ExitCode {
 fn run(args: &[String], json: bool) -> Result<ExitCode, String> {
     match args.get(1).map(String::as_str) {
         Some("route") => {
-            let target = args.get(2).ok_or("usage: shard-router route <MARKET-OR-SERIES-TICKER>")?;
+            let target = args
+                .get(2)
+                .ok_or("usage: shard-router route <MARKET-OR-SERIES-TICKER>")?;
             route(target, json)
         }
         Some("classify") => {
-            let desc = args.get(2).ok_or("usage: shard-router classify <description>")?;
+            let desc = args
+                .get(2)
+                .ok_or("usage: shard-router classify <description>")?;
             classify(desc, json)
         }
         Some("balance") => balance(json),
         Some("fees") => {
-            let target = args.get(2).ok_or("usage: shard-router fees <SERIES-OR-MARKET-TICKER> [price_centicents]")?;
-            let price = args.get(3).map(|s| s.parse::<i64>()).transpose().map_err(|e| e.to_string())?;
+            let target = args
+                .get(2)
+                .ok_or("usage: shard-router fees <SERIES-OR-MARKET-TICKER> [price_centicents]")?;
+            let price = args
+                .get(3)
+                .map(|s| s.parse::<i64>())
+                .transpose()
+                .map_err(|e| e.to_string())?;
             fees(target, price, json)
         }
         Some("prefund") => {
-            let ticker = args.get(2).ok_or("usage: shard-router prefund <MARKET-TICKER> <DOLLARS> [--wait]")?;
+            let ticker = args
+                .get(2)
+                .ok_or("usage: shard-router prefund <MARKET-TICKER> <DOLLARS> [--wait]")?;
             let dollars = args.get(3).ok_or("prefund needs a dollar amount")?;
             let wait = args.iter().any(|a| a == "--wait");
             prefund(ticker, dollars, wait, json)
@@ -79,7 +91,10 @@ fn run(args: &[String], json: bool) -> Result<ExitCode, String> {
             // `sim-world clamp` replays the named OKC-clamp regression live.
             if args.get(2).map(String::as_str) == Some("clamp") {
                 let w = world::okc_clamp_scenario();
-                println!("OKC-clamp named scenario -> landed {} bounced {} balances {:?}", w.fills_landed, w.fills_bounced, w.balances);
+                println!(
+                    "OKC-clamp named scenario -> landed {} bounced {} balances {:?}",
+                    w.fills_landed, w.fills_bounced, w.balances
+                );
                 return Ok(ExitCode::SUCCESS);
             }
             let seed = args.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(1);
@@ -87,7 +102,10 @@ fn run(args: &[String], json: bool) -> Result<ExitCode, String> {
             if json {
                 println!("{{\"seed\": {seed}, \"balances\": {:?}, \"fills_landed\": {}, \"fills_bounced\": {}}}", w.balances, w.fills_landed, w.fills_bounced);
             } else {
-                println!("seed {seed} -> balances {:?} landed {} bounced {} (tick {})", w.balances, w.fills_landed, w.fills_bounced, w.tick);
+                println!(
+                    "seed {seed} -> balances {:?} landed {} bounced {} (tick {})",
+                    w.balances, w.fills_landed, w.fills_bounced, w.tick
+                );
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -100,14 +118,26 @@ fn run(args: &[String], json: bool) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         _ => {
-            eprintln!("usage: shard-router [--json] <route|classify|balance|fees|prefund|shards> [...]");
-            eprintln!("  route <ticker>             resolve shard: static table -> live API (exit 0/3/4)");
-            eprintln!("  classify <text>            semantic hint via jev (gated; UNVERIFIED, exit 3/4)");
+            eprintln!(
+                "usage: shard-router [--json] <route|classify|balance|fees|prefund|shards> [...]"
+            );
+            eprintln!(
+                "  route <ticker>             resolve shard: static table -> live API (exit 0/3/4)"
+            );
+            eprintln!(
+                "  classify <text>            semantic hint via jev (gated; UNVERIFIED, exit 3/4)"
+            );
             eprintln!("  balance                    per-shard balances, exact centicents");
-            eprintln!("  fees <series> [price_cc]   fee schedule + exact per-contract fees at a price");
+            eprintln!(
+                "  fees <series> [price_cc]   fee schedule + exact per-contract fees at a price"
+            );
             eprintln!("  prefund <t> $N [--wait]    ensure shard holding <t> has $N (exit 5 = insufficient)");
-            eprintln!("  ledger                    transfer history + live reconcile (drift per shard)");
-            eprintln!("  exposure                  positions + resting orders aggregated per shard");
+            eprintln!(
+                "  ledger                    transfer history + live reconcile (drift per shard)"
+            );
+            eprintln!(
+                "  exposure                  positions + resting orders aggregated per shard"
+            );
             eprintln!("  sim-world <seed>          DST multi-agent world sim (replayable)");
             Ok(ExitCode::SUCCESS)
         }
@@ -121,7 +151,10 @@ fn route(target: &str, json: bool) -> Result<ExitCode, String> {
     let ks = kalshi::Kalshi::from_env()?;
     let mut live: Option<Verdict> = None;
     if let Ok(ms) = ks.market_shard(target) {
-        live = Some(Verdict::Verified { shard: ms.shard, source: "live" });
+        live = Some(Verdict::Verified {
+            shard: ms.shard,
+            source: "live",
+        });
         final_v = live.clone().unwrap();
     }
     if !json {
@@ -134,7 +167,10 @@ fn route(target: &str, json: bool) -> Result<ExitCode, String> {
         }
     }
     emit_json(json, |o| {
-        o.insert("verdict".into(), serde_json::to_value(&final_v).unwrap_or_default());
+        o.insert(
+            "verdict".into(),
+            serde_json::to_value(&final_v).unwrap_or_default(),
+        );
     });
     Ok(match final_v {
         Verdict::Verified { .. } => ExitCode::SUCCESS,
@@ -150,13 +186,21 @@ fn classify(desc: &str, json: bool) -> Result<ExitCode, String> {
         print_verdict(&v, "jev");
         if matches!(v, Verdict::Hint { .. }) {
             println!("NOTE: semantic hints are for fund pre-positioning only.");
-            println!("      Order placement MUST re-read the shard via `route` (API is the truth).");
+            println!(
+                "      Order placement MUST re-read the shard via `route` (API is the truth)."
+            );
         } else {
-            println!("confidence below gate ({}); refusing to route", jev::CONFIDENCE_GATE);
+            println!(
+                "confidence below gate ({}); refusing to route",
+                jev::CONFIDENCE_GATE
+            );
         }
     }
     emit_json(json, |o| {
-        o.insert("verdict".into(), serde_json::to_value(&v).unwrap_or_default());
+        o.insert(
+            "verdict".into(),
+            serde_json::to_value(&v).unwrap_or_default(),
+        );
     });
     Ok(match v {
         Verdict::Hint { .. } => ExitCode::from(3),
@@ -173,7 +217,10 @@ fn balance(json: bool) -> Result<ExitCode, String> {
         let map: serde_json::Map<String, serde_json::Value> = rows
             .iter()
             .map(|(s, b)| {
-                (format!("shard_{}", s.0), serde_json::json!({ "centicents": b.as_i64() }))
+                (
+                    format!("shard_{}", s.0),
+                    serde_json::json!({ "centicents": b.as_i64() }),
+                )
             })
             .collect();
         o.insert("balances".into(), serde_json::Value::Object(map));
@@ -181,7 +228,13 @@ fn balance(json: bool) -> Result<ExitCode, String> {
     if !json {
         for (shard, bal) in rows {
             let c = bal.as_i64();
-            println!("shard {}: ${}.{:04} ({} centicents)", shard.0, c / 10_000, c.rem_euclid(10_000), c);
+            println!(
+                "shard {}: ${}.{:04} ({} centicents)",
+                shard.0,
+                c / 10_000,
+                c.rem_euclid(10_000),
+                c
+            );
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -191,11 +244,18 @@ fn fees(target: &str, price: Option<i64>, json: bool) -> Result<ExitCode, String
     let series = router::series_of_ticker(target);
     let ks = kalshi::Kalshi::from_env()?;
     let sched = ks.series_fees(series)?;
-    let fee_type = if sched.maker_fees { "quadratic_with_maker_fees" } else { "quadratic" };
+    let fee_type = if sched.maker_fees {
+        "quadratic_with_maker_fees"
+    } else {
+        "quadratic"
+    };
     let mut o = serde_json::Map::new();
     o.insert("series".into(), serde_json::json!(series));
     o.insert("fee_type".into(), serde_json::json!(fee_type));
-    o.insert("multiplier".into(), serde_json::json!(sched.multiplier_pm as f64 / 1000.0));
+    o.insert(
+        "multiplier".into(),
+        serde_json::json!(sched.multiplier_pm as f64 / 1000.0),
+    );
     if let Some(p) = price {
         let taker = sched.taker_fee_centicents(p).map_err(|e| e.to_string())?;
         let maker = sched.maker_fee_centicents(p).map_err(|e| e.to_string())?;
@@ -203,12 +263,28 @@ fn fees(target: &str, price: Option<i64>, json: bool) -> Result<ExitCode, String
         o.insert("taker_fee_centicents".into(), serde_json::json!(taker));
         o.insert("maker_fee_centicents".into(), serde_json::json!(maker));
         if !json {
-            println!("series {series}: {fee_type} x{}", sched.multiplier_pm as f64 / 1000.0);
-            println!("  taker fee at {}cc: {}cc (${:.4})", p, taker, taker as f64 / 10_000.0);
-            println!("  maker fee at {}cc: {}cc (${:.4})", p, maker, maker as f64 / 10_000.0);
+            println!(
+                "series {series}: {fee_type} x{}",
+                sched.multiplier_pm as f64 / 1000.0
+            );
+            println!(
+                "  taker fee at {}cc: {}cc (${:.4})",
+                p,
+                taker,
+                taker as f64 / 10_000.0
+            );
+            println!(
+                "  maker fee at {}cc: {}cc (${:.4})",
+                p,
+                maker,
+                maker as f64 / 10_000.0
+            );
         }
     } else if !json {
-        println!("series {series}: {fee_type} x{}", sched.multiplier_pm as f64 / 1000.0);
+        println!(
+            "series {series}: {fee_type} x{}",
+            sched.multiplier_pm as f64 / 1000.0
+        );
         println!("  pass a price in centicents for exact per-contract fees: `fees {series} 5800`");
     }
     if json {
@@ -225,7 +301,10 @@ fn prefund(ticker: &str, dollars: &str, wait: bool, json: bool) -> Result<ExitCo
     match router::funding_plan(&bals, ms.shard, need) {
         Ok(None) => {
             if !json {
-                println!("shard {} already holds >= ${}; no transfer needed", ms.shard.0, dollars);
+                println!(
+                    "shard {} already holds >= ${}; no transfer needed",
+                    ms.shard.0, dollars
+                );
             }
             emit_json(json, |o| {
                 o.insert("action".into(), serde_json::json!("none"));
@@ -265,15 +344,27 @@ fn prefund(ticker: &str, dollars: &str, wait: bool, json: bool) -> Result<ExitCo
                 o.insert("landed".into(), serde_json::json!(ok));
             });
             if !json {
-                println!("moving ${}.{:04} ({} cc) shard {} -> {} for {ticker}", c / 10_000, c.rem_euclid(10_000), c, src.0, ms.shard.0);
+                println!(
+                    "moving ${}.{:04} ({} cc) shard {} -> {} for {ticker}",
+                    c / 10_000,
+                    c.rem_euclid(10_000),
+                    c,
+                    src.0,
+                    ms.shard.0
+                );
                 println!("transfer {id} accepted (async)");
                 if wait {
                     match landed {
                         crate::dst::WaitState::Landed { polls } => {
-                            println!("LANDED: cash observed on shard {} after {polls} polls", ms.shard.0);
+                            println!(
+                                "LANDED: cash observed on shard {} after {polls} polls",
+                                ms.shard.0
+                            );
                         }
                         crate::dst::WaitState::Stuck { .. } => {
-                            eprintln!("STUCK: transfer not observed within budget; do NOT order yet");
+                            eprintln!(
+                                "STUCK: transfer not observed within budget; do NOT order yet"
+                            );
                         }
                         crate::dst::WaitState::Waiting { .. } => {
                             println!("(async: re-poll balance before ordering, or pass --wait)");
@@ -283,7 +374,11 @@ fn prefund(ticker: &str, dollars: &str, wait: bool, json: bool) -> Result<ExitCo
                     println!("(async: re-poll balance before ordering, or pass --wait)");
                 }
             }
-            Ok(if ok || !wait { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+            Ok(if ok || !wait {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
         }
         Err(e) => {
             emit_json(json, |o| {
@@ -304,21 +399,22 @@ fn ledger_cmd(json: bool) -> Result<ExitCode, String> {
     let live = ks.balances()?;
     // opening snapshot: if a ledger-init file exists (first balances seen),
     // use it; else seed it from the current live state so future runs drift.
-    let init_path = {
-        let mut p = ledger::ledger_path();
-        p.set_extension("init");
-        p
-    };
+    let init_path = ledger::ledger_path()
+        .map_err(|e| e.to_string())?
+        .with_extension("init");
     let opening: HashMap<Shard, Centicents> = if init_path.exists() {
         let txt = std::fs::read_to_string(&init_path).map_err(|e| e.to_string())?;
         let v: HashMap<u8, i64> = serde_json::from_str(&txt).map_err(|e| e.to_string())?;
-        v.into_iter().filter_map(|(k, v)| Shard::from_index(k as i64).ok().map(|s| (s, Centicents(v)))).collect()
+        v.into_iter()
+            .filter_map(|(k, v)| Shard::from_index(k as i64).ok().map(|s| (s, Centicents(v))))
+            .collect()
     } else {
         let snap: HashMap<u8, i64> = live.iter().map(|(s, b)| (s.0, b.as_i64())).collect();
         if let Some(dir) = init_path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        std::fs::write(&init_path, serde_json::to_string(&snap).unwrap_or_default()).map_err(|e| e.to_string())?;
+        std::fs::write(&init_path, serde_json::to_string(&snap).unwrap_or_default())
+            .map_err(|e| e.to_string())?;
         live.clone()
     };
     let drift = ledger::reconcile(&opening, &live, &records);
@@ -326,9 +422,16 @@ fn ledger_cmd(json: bool) -> Result<ExitCode, String> {
         let rows: Vec<serde_json::Value> = drift.iter().map(|d| {
             serde_json::json!({ "shard": d.shard.0, "live_cc": d.live.as_i64(), "expected_cc": d.expected.as_i64(), "drift_cc": d.drift_cc })
         }).collect();
-        println!("{}", serde_json::json!({ "transfers": records.len(), "drift": rows }));
+        println!(
+            "{}",
+            serde_json::json!({ "transfers": records.len(), "drift": rows })
+        );
     } else {
-        println!("transfer ledger: {} records at {}", records.len(), ledger::ledger_path().display());
+        println!(
+            "transfer ledger: {} records at {}",
+            records.len(),
+            ledger::ledger_path().map_err(|e| e.to_string())?.display()
+        );
         for d in &drift {
             let sign = if d.drift_cc >= 0 { "+" } else { "" };
             println!(
@@ -336,8 +439,13 @@ fn ledger_cmd(json: bool) -> Result<ExitCode, String> {
                 d.shard.0,
                 d.live.as_i64() as f64 / 10_000.0,
                 d.expected.as_i64() as f64 / 10_000.0,
-                sign, d.drift_cc,
-                if d.drift_cc == 0 { "(clean)" } else { "(unlogged: fills/settlements/fees)" }
+                sign,
+                d.drift_cc,
+                if d.drift_cc == 0 {
+                    "(clean)"
+                } else {
+                    "(unlogged: fills/settlements/fees)"
+                }
             );
         }
     }
@@ -357,7 +465,10 @@ fn exposure(json: bool) -> Result<ExitCode, String> {
             Verdict::Verified { .. } => router::static_route(series),
             _ => ks
                 .market_shard(ticker)
-                .map(|ms| Verdict::Verified { shard: ms.shard, source: "live" })
+                .map(|ms| Verdict::Verified {
+                    shard: ms.shard,
+                    source: "live",
+                })
                 .unwrap_or(Verdict::Unknown),
         };
         match verdict {
@@ -369,19 +480,30 @@ fn exposure(json: bool) -> Result<ExitCode, String> {
             _ => unknown += n,
         }
     }
-    let mut rows: Vec<(Shard, i64, i64)> = per_shard.into_iter().map(|(s, (c, o))| (s, c, o)).collect();
-    rows.sort_by_key(|r| r.0.0);
+    let mut rows: Vec<(Shard, i64, i64)> =
+        per_shard.into_iter().map(|(s, (c, o))| (s, c, o)).collect();
+    rows.sort_by_key(|r| r.0 .0);
     if json {
-        let arr: Vec<serde_json::Value> = rows.iter()
+        let arr: Vec<serde_json::Value> = rows
+            .iter()
             .map(|(s, c, o)| serde_json::json!({ "shard": s.0, "contracts": c, "lines": o }))
             .collect();
-        println!("{}", serde_json::json!({ "per_shard": arr, "unknown_series_contracts": unknown }));
+        println!(
+            "{}",
+            serde_json::json!({ "per_shard": arr, "unknown_series_contracts": unknown })
+        );
     } else {
         for (s, c, o) in &rows {
-            println!("shard {}: {} contracts across {} position/order lines", s.0, c, o);
+            println!(
+                "shard {}: {} contracts across {} position/order lines",
+                s.0, c, o
+            );
         }
         if unknown > 0 {
-            println!("unknown-series contracts (route these by hand): {}", unknown);
+            println!(
+                "unknown-series contracts (route these by hand): {}",
+                unknown
+            );
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -393,7 +515,10 @@ fn print_verdict(v: &Verdict, tier: &str) {
             println!("{tier:6} -> VERIFIED shard {} ({source})", shard.0);
         }
         Verdict::Hint { shard, confidence } => {
-            println!("{tier:6} -> HINT shard {} (confidence {confidence:.2}, UNVERIFIED)", shard.0);
+            println!(
+                "{tier:6} -> HINT shard {} (confidence {confidence:.2}, UNVERIFIED)",
+                shard.0
+            );
         }
         Verdict::Unknown => {
             println!("{tier:6} -> UNKNOWN (no guess without the API or a gated hint)");

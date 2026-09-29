@@ -24,17 +24,26 @@ pub struct MarketShard {
 }
 
 impl Kalshi {
-    /// Credentials: reads API_KEY_ID and KALSHI_PRIVATE_KEY (PEM) from env.
+    /// Credentials from env, no hidden defaults:
+    ///   API_KEY_ID              — Kalshi API key id
+    ///   KALSHI_PRIVATE_KEY      — RSA private key as inline PEM, OR
+    ///   KALSHI_PRIVATE_KEY_PATH — path to the PEM file
     pub fn from_env() -> Result<Kalshi, String> {
-        let key_id = std::env::var("API_KEY_ID").map_err(|e| e.to_string())?;
-        let pem_path = std::env::var("KALSHI_PRIVATE_KEY_PATH")
-            .unwrap_or_else(|_| "/home/ops/.creds/kalshi.pk".into());
-        let pem = std::fs::read_to_string(&pem_path).map_err(|e| e.to_string())?;
+        let key_id = std::env::var("API_KEY_ID").map_err(|_| "API_KEY_ID not set".to_string())?;
+        let pem = if let Ok(p) = std::env::var("KALSHI_PRIVATE_KEY") {
+            p
+        } else if let Ok(path) = std::env::var("KALSHI_PRIVATE_KEY_PATH") {
+            std::fs::read_to_string(&path).map_err(|e| format!("reading {path}: {e}"))?
+        } else {
+            return Err("set KALSHI_PRIVATE_KEY (inline PEM) or KALSHI_PRIVATE_KEY_PATH".into());
+        };
         let key = rsa::RsaPrivateKey::from_pkcs1_pem(&pem).map_err(|e| e.to_string())?;
         Ok(Kalshi {
             key_id,
             signing_key: SigningKey::<Sha256>::new(key),
-            agent: ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(20)).build(),
+            agent: ureq::AgentBuilder::new()
+                .timeout(std::time::Duration::from_secs(20))
+                .build(),
         })
     }
 
@@ -52,8 +61,8 @@ impl Kalshi {
             .map_err(|e| e.to_string())?
             .as_millis()
             .to_string();
-        // the signature covers ONLY the path — the query string is excluded
-        // (verified against kalshi_client.py; a signed query gets 401)
+        // the signature covers ONLY the path — the query string is
+        // excluded (a signed query string gets 401)
         let sign_path = path.split('?').next().unwrap_or(path);
         let sig = self.sign(&ts, "GET", sign_path);
         self.agent
@@ -93,7 +102,9 @@ impl Kalshi {
     pub fn market_shard(&self, ticker: &str) -> Result<MarketShard, String> {
         let v = self.get(&format!("/trade-api/v2/markets/{ticker}"))?;
         let m = &v["market"];
-        let idx = m["exchange_index"].as_i64().ok_or("missing exchange_index")?;
+        let idx = m["exchange_index"]
+            .as_i64()
+            .ok_or("missing exchange_index")?;
         let shard = Shard::from_index(idx).map_err(|e| e.to_string())?;
         Ok(MarketShard {
             shard,
@@ -105,11 +116,17 @@ impl Kalshi {
     pub fn balances(&self) -> Result<std::collections::HashMap<Shard, Centicents>, String> {
         let v = self.get("/trade-api/v2/portfolio/balance")?;
         let mut out = std::collections::HashMap::new();
-        for row in v["balance_breakdown"].as_array().ok_or("no balance_breakdown")? {
+        for row in v["balance_breakdown"]
+            .as_array()
+            .ok_or("no balance_breakdown")?
+        {
             let idx = row["exchange_index"].as_i64().ok_or("missing shard")?;
             let bal = row["balance"].as_str().ok_or("missing balance")?;
             let shard = Shard::from_index(idx).map_err(|e| e.to_string())?;
-            out.insert(shard, Centicents::parse_dollars(bal).map_err(|e| e.to_string())?);
+            out.insert(
+                shard,
+                Centicents::parse_dollars(bal).map_err(|e| e.to_string())?,
+            );
         }
         Ok(out)
     }
@@ -119,10 +136,15 @@ impl Kalshi {
     pub fn positions(&self) -> Result<Vec<(String, i64)>, String> {
         let v = self.get("/trade-api/v2/portfolio/positions?limit=200&count_filter=position")?;
         let mut out = Vec::new();
-        for p in v["market_positions"].as_array().ok_or("no market_positions")? {
+        for p in v["market_positions"]
+            .as_array()
+            .ok_or("no market_positions")?
+        {
             let ticker = p["ticker"].as_str().ok_or("position missing ticker")?;
             let pos = p["position_fp"].as_str().unwrap_or("0");
-            let n: f64 = pos.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+            let n: f64 = pos
+                .parse()
+                .map_err(|e: std::num::ParseFloatError| e.to_string())?;
             // positions are contract counts — integral by construction
             out.push((ticker.to_string(), n as i64));
         }
@@ -135,8 +157,13 @@ impl Kalshi {
         let mut out = Vec::new();
         for o in v["orders"].as_array().ok_or("no orders")? {
             let ticker = o["ticker"].as_str().ok_or("order missing ticker")?;
-            let cnt = o["original_count"].as_str().or_else(|| o["remaining_count"].as_str()).unwrap_or("0");
-            let n: f64 = cnt.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+            let cnt = o["original_count"]
+                .as_str()
+                .or_else(|| o["remaining_count"].as_str())
+                .unwrap_or("0");
+            let n: f64 = cnt
+                .parse()
+                .map_err(|e: std::num::ParseFloatError| e.to_string())?;
             out.push((ticker.to_string(), n as i64));
         }
         Ok(out)
@@ -147,7 +174,9 @@ impl Kalshi {
         let v = self.get(&format!("/trade-api/v2/series/{series}"))?;
         let s = &v["series"];
         let fee_type = s["fee_type"].as_str().ok_or("missing fee_type")?;
-        let mult = s["fee_multiplier"].as_f64().ok_or("missing fee_multiplier")?;
+        let mult = s["fee_multiplier"]
+            .as_f64()
+            .ok_or("missing fee_multiplier")?;
         crate::router::FeeSchedule::from_series_json(fee_type, mult)
     }
 
@@ -163,10 +192,7 @@ impl Kalshi {
         for _ in 0..crate::dst::MAX_POLLS {
             let bals = self.balances()?;
             let obs = bals.get(&dest).copied().unwrap_or(Centicents(0));
-            state = crate::dst::transition(
-                state,
-                crate::dst::Event::Tick { dest_balance: obs },
-            );
+            state = crate::dst::transition(state, crate::dst::Event::Tick { dest_balance: obs });
             if !matches!(state, crate::dst::WaitState::Waiting { .. }) {
                 return Ok(state);
             }
@@ -175,9 +201,15 @@ impl Kalshi {
         Ok(state)
     }
 
-    /// Move cash between shards. Amount in centicents (the unit the exchange
-    /// itself uses — a $15 transfer is 150_000, the bug we already paid once).
-    pub fn transfer(&self, from: Shard, to: Shard, amount_centicents: i64) -> Result<String, String> {
+    /// Move cash between shards. Amount in centicents — the unit the
+    /// exchange itself uses: a $15 transfer is 150_000, NOT 1500. (The unit
+    /// bug is encoded as a test; we paid it once in production.)
+    pub fn transfer(
+        &self,
+        from: Shard,
+        to: Shard,
+        amount_centicents: i64,
+    ) -> Result<String, String> {
         if from == to {
             return Err(RouterError::SelfTransfer.to_string());
         }
@@ -188,7 +220,13 @@ impl Kalshi {
             "source_exchange_shard": from.0,
             "destination_exchange_shard": to.0,
         });
-        let v = self.post("/trade-api/v2/portfolio/intra_exchange_instance_transfer", &body)?;
-        Ok(v["transfer_id"].as_str().ok_or("no transfer_id in response")?.to_string())
+        let v = self.post(
+            "/trade-api/v2/portfolio/intra_exchange_instance_transfer",
+            &body,
+        )?;
+        Ok(v["transfer_id"]
+            .as_str()
+            .ok_or("no transfer_id in response")?
+            .to_string())
     }
 }

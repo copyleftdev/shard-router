@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 5
+  RUSTUP_MAX_RETRIES: 5
+
+jobs:
+  check:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (zero warnings enforced)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build (release, warnings checked)
+        run: cargo build --release
+
+      - name: Tests
+        run: cargo test --release
+
+      - name: Replay the named DST regressions
+        run: |
+          ./target/release/shard-router sim 42
+          ./target/release/shard-router sim 42  # determinism: identical output
+          ./target/release/shard-router sim-world clamp

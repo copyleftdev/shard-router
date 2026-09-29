@@ -15,18 +15,17 @@ pub struct Jev {
 pub const CONFIDENCE_GATE: f64 = 0.80;
 
 impl Jev {
+    /// API key from env (JEV_API_KEY), no hidden defaults. The semantic tier
+    /// is optional: without a key, `classify` returns an error and every
+    /// other command works unchanged.
     pub fn from_env() -> Result<Jev, String> {
-        let path = "/home/ops/.creds/typsafe_labs.env";
-        let txt = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        let key = txt
-            .lines()
-            .find_map(|l| l.strip_prefix("API_KEY="))
-            .ok_or("API_KEY not found in typsafe_labs.env")?
-            .trim()
-            .to_string();
+        let key = std::env::var("JEV_API_KEY")
+            .map_err(|_| "JEV_API_KEY not set (semantic tier disabled)".to_string())?;
         Ok(Jev {
             api_key: key,
-            agent: ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(30)).build(),
+            agent: ureq::AgentBuilder::new()
+                .timeout(std::time::Duration::from_secs(30))
+                .build(),
         })
     }
 
@@ -88,9 +87,21 @@ mod tests {
 
     #[test]
     fn low_confidence_hints_are_gated_to_unknown() {
-        let low = Verdict::Hint { shard: Shard::THREE, confidence: 0.5 };
+        let low = Verdict::Hint {
+            shard: Shard::THREE,
+            confidence: 0.5,
+        };
         assert_eq!(Jev::gated(low), Verdict::Unknown);
-        let high = Verdict::Hint { shard: Shard::THREE, confidence: 0.95 };
-        assert_eq!(Jev::gated(high), Verdict::Hint { shard: Shard::THREE, confidence: 0.95 });
+        let high = Verdict::Hint {
+            shard: Shard::THREE,
+            confidence: 0.95,
+        };
+        assert_eq!(
+            Jev::gated(high),
+            Verdict::Hint {
+                shard: Shard::THREE,
+                confidence: 0.95
+            }
+        );
     }
 }

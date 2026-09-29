@@ -12,13 +12,12 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
 
-pub fn ledger_path() -> PathBuf {
+pub fn ledger_path() -> Result<PathBuf, String> {
     if let Ok(p) = std::env::var("SHARD_ROUTER_LEDGER") {
-        return PathBuf::from(p);
+        return Ok(PathBuf::from(p));
     }
-    let mut p = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/home/ops".into()));
-    p.push(".local/share/shard-router/ledger.jsonl");
-    p
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    Ok(PathBuf::from(home).join(".local/share/shard-router/ledger.jsonl"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -36,7 +35,7 @@ pub struct TransferRecord {
 /// Append a transfer record. Idempotent on transfer_id: a re-run with the
 /// same id is a no-op (pair-asserted by reading back after write).
 pub fn record_transfer(rec: &TransferRecord) -> Result<(), String> {
-    let path = ledger_path();
+    let path = ledger_path()?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -49,7 +48,11 @@ pub fn record_transfer(rec: &TransferRecord) -> Result<(), String> {
         return Ok(()); // idempotent
     }
     let line = serde_json::to_string(rec).map_err(|e| e.to_string())?;
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
     writeln!(f, "{line}").map_err(|e| e.to_string())?;
     // pair assertion: the record we just wrote is readable back
     let after = load_transfers()?;
@@ -63,7 +66,7 @@ pub fn record_transfer(rec: &TransferRecord) -> Result<(), String> {
 /// Load all transfer records, tolerating a torn final line (a partially
 /// written line from a crash is skipped, never parsed).
 pub fn load_transfers() -> Result<Vec<TransferRecord>, String> {
-    let path = ledger_path();
+    let path = ledger_path()?;
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -139,7 +142,14 @@ mod tests {
     use super::*;
 
     fn rec(id: &str, from: u8, to: u8, cc: i64) -> TransferRecord {
-        TransferRecord { transfer_id: id.into(), from_shard: from, to_shard: to, centicents: cc, ts: 0, observed: "unknown".into() }
+        TransferRecord {
+            transfer_id: id.into(),
+            from_shard: from,
+            to_shard: to,
+            centicents: cc,
+            ts: 0,
+            observed: "unknown".into(),
+        }
     }
 
     #[test]
@@ -155,7 +165,11 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0], r);
         // torn trailing line tolerated
-        std::fs::write(dir.join("l.jsonl"), format!("{}\n{{\"torn", serde_json::to_string(&r).unwrap())).unwrap();
+        std::fs::write(
+            dir.join("l.jsonl"),
+            format!("{}\n{{\"torn", serde_json::to_string(&r).unwrap()),
+        )
+        .unwrap();
         let loaded = load_transfers().unwrap();
         assert_eq!(loaded.len(), 1);
         std::env::remove_var("SHARD_ROUTER_LEDGER");
@@ -184,7 +198,11 @@ mod tests {
 
     #[test]
     fn deltas_never_create_cash() {
-        let records = vec![rec("a", 0, 3, 100), rec("b", 3, 2, 100), rec("c", 2, 1, 100)];
+        let records = vec![
+            rec("a", 0, 3, 100),
+            rec("b", 3, 2, 100),
+            rec("c", 2, 1, 100),
+        ];
         let d = ledger_deltas(&records);
         let sum: i64 = d.values().sum();
         assert_eq!(sum, 0, "ledger deltas must be zero-sum");

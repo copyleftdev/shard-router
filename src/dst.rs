@@ -47,7 +47,10 @@ pub fn transition(state: WaitState, event: Event) -> WaitState {
             if dest_balance.as_i64() >= need.as_i64() {
                 WaitState::Landed { polls }
             } else if polls >= MAX_POLLS {
-                WaitState::Stuck { polls, last_seen: dest_balance }
+                WaitState::Stuck {
+                    polls,
+                    last_seen: dest_balance,
+                }
             } else {
                 WaitState::Waiting { polls, need: *need }
             }
@@ -68,7 +71,10 @@ impl Prng {
 
     pub fn next_u64(&mut self) -> u64 {
         // Numerical Recipes 64-bit LCG — small, adequate for scenario shaping.
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
 
@@ -87,9 +93,18 @@ impl Prng {
 
 /// Run one simulated prefund-wait scenario. Returns the terminal state.
 /// The seed fully determines the world (TigerBeetle: "the seed is the handle").
-pub fn simulate_prefund_wait(seed: u64, start_cc: i64, amount_cc: i64, need_cc: i64, landing_tick: u32) -> WaitState {
+pub fn simulate_prefund_wait(
+    seed: u64,
+    start_cc: i64,
+    amount_cc: i64,
+    need_cc: i64,
+    landing_tick: u32,
+) -> WaitState {
     let mut prng = Prng::new(seed);
-    let mut state = WaitState::Waiting { polls: 0, need: Centicents(need_cc) };
+    let mut state = WaitState::Waiting {
+        polls: 0,
+        need: Centicents(need_cc),
+    };
     for tick in 0..MAX_POLLS {
         let obs = prng.observe(tick, landing_tick, start_cc, amount_cc);
         state = transition(state, Event::Tick { dest_balance: obs });
@@ -109,12 +124,18 @@ mod tests {
     fn fee_anchor_live_fill_86c_quadratic() {
         // Named regression: the live OKC fill (2026-09-29) paid exactly
         // $0.0084/contract taker at 86c on a quadratic mult-1 series.
-        let sched = crate::router::FeeSchedule { maker_fees: false, multiplier_pm: 1000 };
+        let sched = crate::router::FeeSchedule {
+            maker_fees: false,
+            multiplier_pm: 1000,
+        };
         assert_eq!(sched.taker_fee_centicents(8600).unwrap(), 84);
         // max fee at 50c is 175cc = $0.0175
         assert_eq!(sched.taker_fee_centicents(5000).unwrap(), 175);
         // half multiplier at 50c: 87.5 -> 88 (half-up, never undercharge)
-        let half = crate::router::FeeSchedule { maker_fees: false, multiplier_pm: 500 };
+        let half = crate::router::FeeSchedule {
+            maker_fees: false,
+            multiplier_pm: 500,
+        };
         assert_eq!(half.taker_fee_centicents(5000).unwrap(), 88);
     }
 
@@ -122,7 +143,10 @@ mod tests {
     fn fee_maker_zero_on_quadratic_lanes() {
         // Named regression: tennis challengers are fee_type quadratic —
         // maker fills cost zero (verified live: 5 maker fills, $0.000000 fees).
-        let sched = crate::router::FeeSchedule { maker_fees: false, multiplier_pm: 1000 };
+        let sched = crate::router::FeeSchedule {
+            maker_fees: false,
+            multiplier_pm: 1000,
+        };
         assert_eq!(sched.maker_fee_centicents(5800).unwrap(), 0);
     }
 
@@ -130,7 +154,10 @@ mod tests {
     fn fee_maker_schedule_on_maker_fee_lanes() {
         // Published fee schedule: maker fee range $0.02–$0.44 per 100 ct
         // => max $0.0044/ct at 50c = 44 centicents.
-        let sched = crate::router::FeeSchedule { maker_fees: true, multiplier_pm: 1000 };
+        let sched = crate::router::FeeSchedule {
+            maker_fees: true,
+            multiplier_pm: 1000,
+        };
         assert_eq!(sched.maker_fee_centicents(5000).unwrap(), 44);
         // 0.0176 * 0.14 * 0.86 = $0.00212 -> 21 centicents
         assert_eq!(sched.maker_fee_centicents(1400).unwrap(), 21);
@@ -176,7 +203,7 @@ mod tests {
             let tick = (seed % 30) as u32;
             let st = simulate_prefund_wait(seed, 0, 1_000_000, 1_000_000, tick);
             match st {
-                WaitState::Landed { polls } => assert!(polls >= tick + 1),
+                WaitState::Landed { polls } => assert!(polls > tick),
                 WaitState::Stuck { .. } => assert!(tick >= MAX_POLLS),
                 WaitState::Waiting { .. } => panic!("terminal states only"),
             }

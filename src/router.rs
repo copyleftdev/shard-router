@@ -113,8 +113,12 @@ impl FeeSchedule {
         assert!(price_cc <= 10_000, "price must be <= $1");
         // fee_cc = 10^4 · 0.07 · (mult_pm/1000) · p_cc·(10^4−p_cc)/10^8
         //        = 7 · mult_pm · p_cc · (10^4−p_cc) / 10^9
-        let numer = 7 * self.multiplier_pm.checked_mul(price_cc).ok_or(RouterError::MoneyOverflow(price_cc))?
-            .checked_mul(10_000 - price_cc).ok_or(RouterError::MoneyOverflow(price_cc))?;
+        let numer = 7 * self
+            .multiplier_pm
+            .checked_mul(price_cc)
+            .ok_or(RouterError::MoneyOverflow(price_cc))?
+            .checked_mul(10_000 - price_cc)
+            .ok_or(RouterError::MoneyOverflow(price_cc))?;
         // half-up: fees must never undercharge by truncation
         Ok((numer + 500_000_000) / 1_000_000_000)
     }
@@ -127,8 +131,13 @@ impl FeeSchedule {
         assert!(price_cc >= 0, "price must be non-negative");
         assert!(price_cc <= 10_000, "price must be <= $1");
         // fee_cc = 176 · mult_pm · p_cc · (10^4−p_cc) / 10^11
-        let numer = 176 * self.multiplier_pm.checked_mul(price_cc).ok_or(RouterError::MoneyOverflow(price_cc))?
-            .checked_mul(10_000 - price_cc).ok_or(RouterError::MoneyOverflow(price_cc))?;
+        let numer = 176
+            * self
+                .multiplier_pm
+                .checked_mul(price_cc)
+                .ok_or(RouterError::MoneyOverflow(price_cc))?
+                .checked_mul(10_000 - price_cc)
+                .ok_or(RouterError::MoneyOverflow(price_cc))?;
         Ok((numer + 50_000_000_000) / 100_000_000_000)
     }
 
@@ -138,8 +147,14 @@ impl FeeSchedule {
         assert!(multiplier <= 10.0, "fee multiplier out of sane range");
         let pm = (multiplier * 1000.0).round() as i64;
         match fee_type {
-            "quadratic" => Ok(FeeSchedule { maker_fees: false, multiplier_pm: pm }),
-            "quadratic_with_maker_fees" => Ok(FeeSchedule { maker_fees: true, multiplier_pm: pm }),
+            "quadratic" => Ok(FeeSchedule {
+                maker_fees: false,
+                multiplier_pm: pm,
+            }),
+            "quadratic_with_maker_fees" => Ok(FeeSchedule {
+                maker_fees: true,
+                multiplier_pm: pm,
+            }),
             other => Err(format!("unrecognized fee_type: {other}")),
         }
     }
@@ -161,30 +176,59 @@ pub enum Verdict {
 /// (Never predict what you can read.)
 pub fn static_route(series: &str) -> Verdict {
     const S0: &[&str] = &[
-        "KXHIGH", "KXLOW", "KXNFLGAME", "KXNFLSPREAD", "KXNFLTOTAL", "KXCPI",
-        "KXEARNINGSMENTIONNKE", "KXMENTIONEARNNKE", "KXSB", "KXMLB", "KXMLBGAME",
+        "KXHIGH",
+        "KXLOW",
+        "KXNFLGAME",
+        "KXNFLSPREAD",
+        "KXNFLTOTAL",
+        "KXCPI",
+        "KXEARNINGSMENTIONNKE",
+        "KXMENTIONEARNNKE",
+        "KXSB",
+        "KXMLB",
+        "KXMLBGAME",
     ];
     const S1: &[&str] = &["KXMVECROSSCATEGORY", "KXMVECROSSCATEGORY0"];
     const S2: &[&str] = &["KXBTCD", "KXETHD", "KXCOPPERD", "KXXRPD"];
     const S3: &[&str] = &[
-        "KXATPCHALLENGERMATCH", "KXATPMATCH", "KXATPSETWINNER", "KXWTAMATCH",
-        "KXWNBA2HTOTAL", "KXEPLGAME", "KXBUNDESLIGAGAME",
+        "KXATPCHALLENGERMATCH",
+        "KXATPMATCH",
+        "KXATPSETWINNER",
+        "KXWTAMATCH",
+        "KXWNBA2HTOTAL",
+        "KXEPLGAME",
+        "KXBUNDESLIGAGAME",
     ];
     // KXATPCHALLENGERMATCH must match before KXATPMATCH-style prefixes, but
     // series tickers are exact, so a direct scan is unambiguous.
     if S0.contains(&series) {
-        Verdict::Verified { shard: Shard::ZERO, source: "static" }
+        Verdict::Verified {
+            shard: Shard::ZERO,
+            source: "static",
+        }
     } else if S1.contains(&series) {
-        Verdict::Verified { shard: Shard::ONE, source: "static" }
+        Verdict::Verified {
+            shard: Shard::ONE,
+            source: "static",
+        }
     } else if S2.contains(&series) {
-        Verdict::Verified { shard: Shard::TWO, source: "static" }
+        Verdict::Verified {
+            shard: Shard::TWO,
+            source: "static",
+        }
     } else if S3.contains(&series) {
-        Verdict::Verified { shard: Shard::THREE, source: "static" }
+        Verdict::Verified {
+            shard: Shard::THREE,
+            source: "static",
+        }
     } else if series.starts_with("KXHIGH") || series.starts_with("KXLOW") {
         // Weather families are city-suffixed (KXHIGHLAX, KXHIGHTPA, ...) but
         // ALL settle on the shard-0 engine; a family-prefix rule covers every
         // city without enumerating them (they rotate).
-        Verdict::Verified { shard: Shard::ZERO, source: "static-family" }
+        Verdict::Verified {
+            shard: Shard::ZERO,
+            source: "static-family",
+        }
     } else {
         Verdict::Unknown
     }
@@ -222,7 +266,10 @@ pub fn funding_plan(
             let _ = src;
             Ok(Some((*src, Centicents(shortfall))))
         }
-        _ => Err(RouterError::Insufficient { have: have.as_i64(), need: need.as_i64() }),
+        _ => Err(RouterError::Insufficient {
+            have: have.as_i64(),
+            need: need.as_i64(),
+        }),
     }
 }
 
@@ -232,7 +279,10 @@ mod tests {
 
     #[test]
     fn money_parses_exact() {
-        assert_eq!(Centicents::parse_dollars("17.4085").unwrap().as_i64(), 174_085);
+        assert_eq!(
+            Centicents::parse_dollars("17.4085").unwrap().as_i64(),
+            174_085
+        );
         assert_eq!(Centicents::parse_dollars("15").unwrap().as_i64(), 150_000);
         assert_eq!(Centicents::parse_dollars("0.0001").unwrap().as_i64(), 1);
         assert!(Centicents::parse_dollars("17.40851").is_err());
@@ -249,14 +299,50 @@ mod tests {
 
     #[test]
     fn static_routes() {
-        assert_eq!(static_route("KXHIGH"), Verdict::Verified { shard: Shard::ZERO, source: "static" });
-        assert_eq!(static_route("KXATPCHALLENGERMATCH"), Verdict::Verified { shard: Shard::THREE, source: "static" });
-        assert_eq!(static_route("KXBTCD"), Verdict::Verified { shard: Shard::TWO, source: "static" });
+        assert_eq!(
+            static_route("KXHIGH"),
+            Verdict::Verified {
+                shard: Shard::ZERO,
+                source: "static"
+            }
+        );
+        assert_eq!(
+            static_route("KXATPCHALLENGERMATCH"),
+            Verdict::Verified {
+                shard: Shard::THREE,
+                source: "static"
+            }
+        );
+        assert_eq!(
+            static_route("KXBTCD"),
+            Verdict::Verified {
+                shard: Shard::TWO,
+                source: "static"
+            }
+        );
         assert_eq!(static_route("KXNOTATHING"), Verdict::Unknown);
         // weather families: every city suffix routes to shard 0
-        assert_eq!(static_route("KXHIGHLAX"), Verdict::Verified { shard: Shard::ZERO, source: "static-family" });
-        assert_eq!(static_route("KXHIGHTPA"), Verdict::Verified { shard: Shard::ZERO, source: "static-family" });
-        assert_eq!(static_route("KXLOWTHOU"), Verdict::Verified { shard: Shard::ZERO, source: "static-family" });
+        assert_eq!(
+            static_route("KXHIGHLAX"),
+            Verdict::Verified {
+                shard: Shard::ZERO,
+                source: "static-family"
+            }
+        );
+        assert_eq!(
+            static_route("KXHIGHTPA"),
+            Verdict::Verified {
+                shard: Shard::ZERO,
+                source: "static-family"
+            }
+        );
+        assert_eq!(
+            static_route("KXLOWTHOU"),
+            Verdict::Verified {
+                shard: Shard::ZERO,
+                source: "static-family"
+            }
+        );
     }
 
     #[test]
@@ -266,14 +352,21 @@ mod tests {
         b.insert(Shard::THREE, Centicents::parse_dollars("1.00").unwrap());
         // shortfall = 6.00 - 1.00 = 5.00, exactly coverable from shard 0
         let plan = funding_plan(&b, Shard::THREE, Centicents::parse_dollars("6.00").unwrap());
-        assert_eq!(plan.unwrap(), Some((Shard::ZERO, Centicents::parse_dollars("5.00").unwrap())));
+        assert_eq!(
+            plan.unwrap(),
+            Some((Shard::ZERO, Centicents::parse_dollars("5.00").unwrap()))
+        );
 
         // already funded -> no transfer
         let plan = funding_plan(&b, Shard::ZERO, Centicents::parse_dollars("5.00").unwrap());
         assert_eq!(plan.unwrap(), None);
 
         // partial funding is refused: guarantee, not best-effort
-        let plan = funding_plan(&b, Shard::THREE, Centicents::parse_dollars("10.00").unwrap());
+        let plan = funding_plan(
+            &b,
+            Shard::THREE,
+            Centicents::parse_dollars("10.00").unwrap(),
+        );
         assert!(matches!(plan, Err(RouterError::Insufficient { .. })));
     }
 
@@ -281,13 +374,20 @@ mod tests {
     fn funding_plan_insufficient_is_typed() {
         let mut b = HashMap::new();
         b.insert(Shard::ZERO, Centicents::parse_dollars("2.00").unwrap());
-        let err = funding_plan(&b, Shard::THREE, Centicents::parse_dollars("10.00").unwrap());
+        let err = funding_plan(
+            &b,
+            Shard::THREE,
+            Centicents::parse_dollars("10.00").unwrap(),
+        );
         assert!(matches!(err, Err(RouterError::Insufficient { .. })));
     }
 
     #[test]
     fn series_extraction() {
-        assert_eq!(series_of_ticker("KXATPCHALLENGERMATCH-26SEP29CADSAN-CAD"), "KXATPCHALLENGERMATCH");
+        assert_eq!(
+            series_of_ticker("KXATPCHALLENGERMATCH-26SEP29CADSAN-CAD"),
+            "KXATPCHALLENGERMATCH"
+        );
         assert_eq!(series_of_ticker("KXHIGH"), "KXHIGH");
     }
 }
