@@ -1,0 +1,19 @@
+[package]
+name = "shard-router"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic-first semantic shard router for Kalshi exchange shards, with Jev (TypeSafe System One) as the semantic fallback tier"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+rsa = { version = "0.9", features = ["sha2", "pem"] }
+base64 = "0.22"
+thiserror = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
