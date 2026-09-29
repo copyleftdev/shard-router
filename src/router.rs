@@ -13,7 +13,7 @@ use std::collections::HashMap;
 /// Shard id on the Kalshi exchange. Empirically 0..=3 (verified by transfer
 /// enum probe 2026-09-29: shards > 3 answer "unknown destination exchange
 /// shard"). We accept the closed set and reject anything else at parse time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Shard(pub u8);
 
 impl Shard {
@@ -47,7 +47,7 @@ pub enum RouterError {
 /// Money in integer centicents. Parsed from Kalshi fixed-point dollar strings
 /// ("17.4085") with manual digit arithmetic — no float round-trips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Centicents(i64);
+pub struct Centicents(pub i64);
 
 impl Centicents {
     /// Parse a dollar amount like "17.4085" into centicents (17_4085).
@@ -89,10 +89,67 @@ impl Centicents {
     }
 }
 
+/// Fee schedule for a series, read from `GET /trade-api/v2/series/{series}`.
+/// The fee constants are exact integers: coefficient in hundredths of a
+/// percent (7 = 0.07 taker, 176/100 = 0.0176 maker, from the published fee
+/// schedule), multiplier in per-mille (1000 = 1.0, 500 = 0.5).
+///
+/// Validated against a live fill (2026-09-29, KXHIGHTOKC NO @ 86c, quadratic
+/// mult 1): taker fee 0.0084 dollars/contract == 84 centicents below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeeSchedule {
+    pub maker_fees: bool,
+    /// multiplier in per-mille: 1000 = 1.0
+    pub multiplier_pm: i64,
+}
+
+impl FeeSchedule {
+    /// Taker fee per contract, exact integer centicents:
+    /// fee_$ = coeff·p·(1−p); in centicents with price in centicents:
+    /// 7·mult·p_cc·(10_000−p_cc)/10^6 (mult in per-mille over 1000).
+    /// Rounding is half-up: fees must never undercharge by truncation.
+    pub fn taker_fee_centicents(self, price_cc: i64) -> Result<i64, RouterError> {
+        assert!(price_cc >= 0, "price must be non-negative");
+        assert!(price_cc <= 10_000, "price must be <= $1");
+        // fee_cc = 10^4 · 0.07 · (mult_pm/1000) · p_cc·(10^4−p_cc)/10^8
+        //        = 7 · mult_pm · p_cc · (10^4−p_cc) / 10^9
+        let numer = 7 * self.multiplier_pm.checked_mul(price_cc).ok_or(RouterError::MoneyOverflow(price_cc))?
+            .checked_mul(10_000 - price_cc).ok_or(RouterError::MoneyOverflow(price_cc))?;
+        // half-up: fees must never undercharge by truncation
+        Ok((numer + 500_000_000) / 1_000_000_000)
+    }
+
+    /// Maker fee per contract (zero on `quadratic` series).
+    pub fn maker_fee_centicents(self, price_cc: i64) -> Result<i64, RouterError> {
+        if !self.maker_fees {
+            return Ok(0);
+        }
+        assert!(price_cc >= 0, "price must be non-negative");
+        assert!(price_cc <= 10_000, "price must be <= $1");
+        // fee_cc = 176 · mult_pm · p_cc · (10^4−p_cc) / 10^11
+        let numer = 176 * self.multiplier_pm.checked_mul(price_cc).ok_or(RouterError::MoneyOverflow(price_cc))?
+            .checked_mul(10_000 - price_cc).ok_or(RouterError::MoneyOverflow(price_cc))?;
+        Ok((numer + 50_000_000_000) / 100_000_000_000)
+    }
+
+    /// Parse from the exchange's series JSON fields.
+    pub fn from_series_json(fee_type: &str, multiplier: f64) -> Result<FeeSchedule, String> {
+        assert!(multiplier > 0.0, "fee multiplier must be positive");
+        assert!(multiplier <= 10.0, "fee multiplier out of sane range");
+        let pm = (multiplier * 1000.0).round() as i64;
+        match fee_type {
+            "quadratic" => Ok(FeeSchedule { maker_fees: false, multiplier_pm: pm }),
+            "quadratic_with_maker_fees" => Ok(FeeSchedule { maker_fees: true, multiplier_pm: pm }),
+            other => Err(format!("unrecognized fee_type: {other}")),
+        }
+    }
+}
+
 /// A routing verdict. VERIFIED means it came from the exchange API (or the
 /// static table of families we have already read). HINT means the semantic
 /// tier produced it and the caller MUST re-verify before placing an order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Verdict {
     Verified { shard: Shard, source: &'static str },
     Hint { shard: Shard, confidence: f64 },

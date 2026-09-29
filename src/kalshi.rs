@@ -17,6 +17,9 @@ pub struct Kalshi {
 #[derive(Debug)]
 pub struct MarketShard {
     pub shard: Shard,
+    /// Market status at read time (active/finalized/...). Kept for the
+    /// caller's logs; the router itself only needs the shard.
+    #[allow(dead_code)]
     pub status: String,
 }
 
@@ -106,6 +109,39 @@ impl Kalshi {
             out.insert(shard, Centicents::parse_dollars(bal).map_err(|e| e.to_string())?);
         }
         Ok(out)
+    }
+
+    /// Fee schedule for a series (fee_type + multiplier, exact).
+    pub fn series_fees(&self, series: &str) -> Result<crate::router::FeeSchedule, String> {
+        let v = self.get(&format!("/trade-api/v2/series/{series}"))?;
+        let s = &v["series"];
+        let fee_type = s["fee_type"].as_str().ok_or("missing fee_type")?;
+        let mult = s["fee_multiplier"].as_f64().ok_or("missing fee_multiplier")?;
+        crate::router::FeeSchedule::from_series_json(fee_type, mult)
+    }
+
+    /// Wait for a transfer to land: poll the destination shard's balance
+    /// until it covers `need`, bounded by MAX_POLLS. Feeds observations
+    /// through the SAME pure transition the DST harness exercises.
+    pub fn wait_for_landed(
+        &self,
+        dest: Shard,
+        need: Centicents,
+    ) -> Result<crate::dst::WaitState, String> {
+        let mut state = crate::dst::WaitState::Waiting { polls: 0, need };
+        for _ in 0..crate::dst::MAX_POLLS {
+            let bals = self.balances()?;
+            let obs = bals.get(&dest).copied().unwrap_or(Centicents(0));
+            state = crate::dst::transition(
+                state,
+                crate::dst::Event::Tick { dest_balance: obs },
+            );
+            if !matches!(state, crate::dst::WaitState::Waiting { .. }) {
+                return Ok(state);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        Ok(state)
     }
 
     /// Move cash between shards. Amount in centicents (the unit the exchange
