@@ -52,7 +52,10 @@ impl Kalshi {
             .map_err(|e| e.to_string())?
             .as_millis()
             .to_string();
-        let sig = self.sign(&ts, "GET", path);
+        // the signature covers ONLY the path — the query string is excluded
+        // (verified against kalshi_client.py; a signed query gets 401)
+        let sign_path = path.split('?').next().unwrap_or(path);
+        let sig = self.sign(&ts, "GET", sign_path);
         self.agent
             .get(&format!("https://api.elections.kalshi.com{path}"))
             .set("KALSHI-ACCESS-KEY", &self.key_id)
@@ -107,6 +110,34 @@ impl Kalshi {
             let bal = row["balance"].as_str().ok_or("missing balance")?;
             let shard = Shard::from_index(idx).map_err(|e| e.to_string())?;
             out.insert(shard, Centicents::parse_dollars(bal).map_err(|e| e.to_string())?);
+        }
+        Ok(out)
+    }
+
+    /// Open positions: (ticker, position in contracts — negative = short YES
+    /// i.e. long NO). Account-wide across all shards.
+    pub fn positions(&self) -> Result<Vec<(String, i64)>, String> {
+        let v = self.get("/trade-api/v2/portfolio/positions?limit=200&count_filter=position")?;
+        let mut out = Vec::new();
+        for p in v["market_positions"].as_array().ok_or("no market_positions")? {
+            let ticker = p["ticker"].as_str().ok_or("position missing ticker")?;
+            let pos = p["position_fp"].as_str().unwrap_or("0");
+            let n: f64 = pos.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+            // positions are contract counts — integral by construction
+            out.push((ticker.to_string(), n as i64));
+        }
+        Ok(out)
+    }
+
+    /// Resting orders: (ticker, count in contracts).
+    pub fn resting_orders(&self) -> Result<Vec<(String, i64)>, String> {
+        let v = self.get("/trade-api/v2/portfolio/orders?status=resting&limit=100")?;
+        let mut out = Vec::new();
+        for o in v["orders"].as_array().ok_or("no orders")? {
+            let ticker = o["ticker"].as_str().ok_or("order missing ticker")?;
+            let cnt = o["original_count"].as_str().or_else(|| o["remaining_count"].as_str()).unwrap_or("0");
+            let n: f64 = cnt.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+            out.push((ticker.to_string(), n as i64));
         }
         Ok(out)
     }

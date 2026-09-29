@@ -55,12 +55,23 @@ schedule (50c max: taker 175cc, maker 44cc; 0.5x multiplier lanes halve it).
 
 ## DST (VOPR pattern)
 
-The prefund-wait flow is a pure state machine `transition(state, event)`;
-all entropy (balance observations, transfer landing) is injected. The live
-adapter feeds real observations through the same transition the simulator
-exercises, and `sim <seed>` replays a world: same seed => same terminal
-state. Named regressions pin the two failure modes (never fake-lands,
-stuck transfers bounded) and the live fee anchors.
+Two pure state machines, both replayable by seed:
+
+- `sim <seed>` — the prefund-wait machine. The live adapter feeds real
+  balance observations through the SAME transition the simulator
+  exercises; named regressions pin never-fake-lands and stuck-bounded.
+- `sim-world <seed>` / `sim-world clamp` — the multi-agent world machine:
+  PRNG-shaped agents issue transfers and orders with racing landing/fill
+  ticks. Invariants checked after EVERY transition:
+  INV-1 cash conservation (balances + in-flight + filled == initial),
+  INV-2 fills draw only OBSERVED cash (the OKC-clamp bug class, replayable
+  via the named `clamp` scenario), INV-3 bounded tick budget. A failing
+  seed is a coordinate: `sim-world <seed>` reproduces it forever.
+
+The ledger (`ledger`) is append-only JSONL, idempotent on transfer_id,
+tolerant of torn final writes; `reconcile` diffs ledger-expected vs live
+per shard and labels drift (settlements/fills/fees the ledger honestly
+does not know about).
 
 Credentials: `API_KEY_ID` env (`/home/ops/.creds/kalshi.env`), private key at
 `/home/ops/.creds/kalshi.pk` (RSA-PSS signing, same scheme as the kalshi-chaos

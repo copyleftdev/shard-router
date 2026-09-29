@@ -16,6 +16,8 @@
 
 mod dst;
 mod jev;
+mod ledger;
+mod world;
 mod kalshi;
 mod router;
 
@@ -70,6 +72,25 @@ fn run(args: &[String], json: bool) -> Result<ExitCode, String> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Some("ledger") => ledger_cmd(json),
+        Some("exposure") => exposure(json),
+        Some("sim-world") => {
+            // DST world harness: multi-agent shard universe at a seed.
+            // `sim-world clamp` replays the named OKC-clamp regression live.
+            if args.get(2).map(String::as_str) == Some("clamp") {
+                let w = world::okc_clamp_scenario();
+                println!("OKC-clamp named scenario -> landed {} bounced {} balances {:?}", w.fills_landed, w.fills_bounced, w.balances);
+                return Ok(ExitCode::SUCCESS);
+            }
+            let seed = args.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(1);
+            let w = world::run_world(seed, [500_000; world::NUM_SHARDS]);
+            if json {
+                println!("{{\"seed\": {seed}, \"balances\": {:?}, \"fills_landed\": {}, \"fills_bounced\": {}}}", w.balances, w.fills_landed, w.fills_bounced);
+            } else {
+                println!("seed {seed} -> balances {:?} landed {} bounced {} (tick {})", w.balances, w.fills_landed, w.fills_bounced, w.tick);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Some("sim") => {
             // DST harness: run the prefund-wait simulator at a seed. Same
             // seed => same world => same terminal state (the replay promise).
@@ -85,6 +106,9 @@ fn run(args: &[String], json: bool) -> Result<ExitCode, String> {
             eprintln!("  balance                    per-shard balances, exact centicents");
             eprintln!("  fees <series> [price_cc]   fee schedule + exact per-contract fees at a price");
             eprintln!("  prefund <t> $N [--wait]    ensure shard holding <t> has $N (exit 5 = insufficient)");
+            eprintln!("  ledger                    transfer history + live reconcile (drift per shard)");
+            eprintln!("  exposure                  positions + resting orders aggregated per shard");
+            eprintln!("  sim-world <seed>          DST multi-agent world sim (replayable)");
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -212,6 +236,20 @@ fn prefund(ticker: &str, dollars: &str, wait: bool, json: bool) -> Result<ExitCo
         Ok(Some((src, amt))) => {
             let c = amt.as_i64();
             let id = ks.transfer(src, ms.shard, c)?;
+            let rec = ledger::TransferRecord {
+                transfer_id: id.clone(),
+                from_shard: src.0,
+                to_shard: ms.shard.0,
+                centicents: c,
+                ts: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                observed: "unknown".into(),
+            };
+            if let Err(e) = ledger::record_transfer(&rec) {
+                eprintln!("WARN: ledger record failed: {e}");
+            }
             let landed = if wait {
                 ks.wait_for_landed(ms.shard, need)?
             } else {
@@ -258,6 +296,95 @@ fn prefund(ticker: &str, dollars: &str, wait: bool, json: bool) -> Result<ExitCo
             Ok(ExitCode::from(5))
         }
     }
+}
+
+fn ledger_cmd(json: bool) -> Result<ExitCode, String> {
+    let records = ledger::load_transfers()?;
+    let ks = kalshi::Kalshi::from_env()?;
+    let live = ks.balances()?;
+    // opening snapshot: if a ledger-init file exists (first balances seen),
+    // use it; else seed it from the current live state so future runs drift.
+    let init_path = {
+        let mut p = ledger::ledger_path();
+        p.set_extension("init");
+        p
+    };
+    let opening: HashMap<Shard, Centicents> = if init_path.exists() {
+        let txt = std::fs::read_to_string(&init_path).map_err(|e| e.to_string())?;
+        let v: HashMap<u8, i64> = serde_json::from_str(&txt).map_err(|e| e.to_string())?;
+        v.into_iter().filter_map(|(k, v)| Shard::from_index(k as i64).ok().map(|s| (s, Centicents(v)))).collect()
+    } else {
+        let snap: HashMap<u8, i64> = live.iter().map(|(s, b)| (s.0, b.as_i64())).collect();
+        if let Some(dir) = init_path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::write(&init_path, serde_json::to_string(&snap).unwrap_or_default()).map_err(|e| e.to_string())?;
+        live.clone()
+    };
+    let drift = ledger::reconcile(&opening, &live, &records);
+    if json {
+        let rows: Vec<serde_json::Value> = drift.iter().map(|d| {
+            serde_json::json!({ "shard": d.shard.0, "live_cc": d.live.as_i64(), "expected_cc": d.expected.as_i64(), "drift_cc": d.drift_cc })
+        }).collect();
+        println!("{}", serde_json::json!({ "transfers": records.len(), "drift": rows }));
+    } else {
+        println!("transfer ledger: {} records at {}", records.len(), ledger::ledger_path().display());
+        for d in &drift {
+            let sign = if d.drift_cc >= 0 { "+" } else { "" };
+            println!(
+                "  shard {}: live ${:.2} expected ${:.2} drift {}{}cc {}",
+                d.shard.0,
+                d.live.as_i64() as f64 / 10_000.0,
+                d.expected.as_i64() as f64 / 10_000.0,
+                sign, d.drift_cc,
+                if d.drift_cc == 0 { "(clean)" } else { "(unlogged: fills/settlements/fees)" }
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn exposure(json: bool) -> Result<ExitCode, String> {
+    let ks = kalshi::Kalshi::from_env()?;
+    let positions = ks.positions()?;
+    let orders = ks.resting_orders()?;
+    let mut per_shard: HashMap<Shard, (i64, i64)> = HashMap::new(); // (contracts, lines)
+    let mut unknown = 0i64;
+    for (ticker, n) in positions.iter().chain(orders.iter()) {
+        let series = router::series_of_ticker(ticker);
+        // static first; one bounded live read per unknown line completes it
+        let verdict = match router::static_route(series) {
+            Verdict::Verified { .. } => router::static_route(series),
+            _ => ks
+                .market_shard(ticker)
+                .map(|ms| Verdict::Verified { shard: ms.shard, source: "live" })
+                .unwrap_or(Verdict::Unknown),
+        };
+        match verdict {
+            Verdict::Verified { shard, .. } => {
+                let e = per_shard.entry(shard).or_insert((0, 0));
+                e.0 += n;
+                e.1 += 1;
+            }
+            _ => unknown += n,
+        }
+    }
+    let mut rows: Vec<(Shard, i64, i64)> = per_shard.into_iter().map(|(s, (c, o))| (s, c, o)).collect();
+    rows.sort_by_key(|r| r.0.0);
+    if json {
+        let arr: Vec<serde_json::Value> = rows.iter()
+            .map(|(s, c, o)| serde_json::json!({ "shard": s.0, "contracts": c, "lines": o }))
+            .collect();
+        println!("{}", serde_json::json!({ "per_shard": arr, "unknown_series_contracts": unknown }));
+    } else {
+        for (s, c, o) in &rows {
+            println!("shard {}: {} contracts across {} position/order lines", s.0, c, o);
+        }
+        if unknown > 0 {
+            println!("unknown-series contracts (route these by hand): {}", unknown);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn print_verdict(v: &Verdict, tier: &str) {
