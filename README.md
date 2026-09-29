@@ -40,8 +40,27 @@ shard-router shards                            # the shard map
 shard-router route  KXATPCHALLENGERMATCH-...   # static -> live resolution
 shard-router classify "BTC daily range market" # jev semantic hint (UNVERIFIED)
 shard-router balance                           # per-shard cash, exact centicents
-shard-router prefund KX...-TICKER 15.00        # move shortfall to that shard
+shard-router fees    KXNFLGAME 8600            # exact taker/maker fees at a price
+shard-router prefund KX...-TICKER 15.00 --wait # move shortfall, wait until LANDED
+shard-router sim     42                        # DST harness: replay a seed
 ```
+
+`--json` emits machine-readable output on every command. Exit codes are a
+stable gate contract: `0` VERIFIED, `3` gated hint, `4` unknown,
+`5` insufficient funds — so scripts can `route && prefund --wait && place`.
+
+Fee math is exact integer centicents, validated against a live fill
+(KXHIGHTOKC NO @ 86c → 84cc taker, to the cent) and the published fee
+schedule (50c max: taker 175cc, maker 44cc; 0.5x multiplier lanes halve it).
+
+## DST (VOPR pattern)
+
+The prefund-wait flow is a pure state machine `transition(state, event)`;
+all entropy (balance observations, transfer landing) is injected. The live
+adapter feeds real observations through the same transition the simulator
+exercises, and `sim <seed>` replays a world: same seed => same terminal
+state. Named regressions pin the two failure modes (never fake-lands,
+stuck transfers bounded) and the live fee anchors.
 
 Credentials: `API_KEY_ID` env (`/home/ops/.creds/kalshi.env`), private key at
 `/home/ops/.creds/kalshi.pk` (RSA-PSS signing, same scheme as the kalshi-chaos
